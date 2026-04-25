@@ -11,7 +11,7 @@ const client = new Client({
     ]
 });
 
-const TOKEN = "MTQ5Nzc0MDAyNDk4MzE5NTY2OA.G6HjA7.J914Io6V8KPSWp5ec_uM73VQlpocBcmR6qbNO8";
+const TOKEN = "MTQ5Nzc0MDAyNDk4MzE5NTY2OA.G52rn3.pQWliqmaqa_VcJqVK1Xfn2Vfg_wuNnAijpGuSU";
 
 http.createServer((req, res) => {
     res.writeHead(200, { 'Content-Type': 'text/plain' });
