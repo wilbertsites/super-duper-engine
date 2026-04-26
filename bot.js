@@ -1,13 +1,13 @@
-const { Client, GatewayIntentBits } = require('discord.js');
+const { Client } = require('discord.js');
 const http = require('http');
 
 const client = new Client({
     intents: [
-        GatewayIntentBits.Guilds,
-        GatewayIntentBits.GuildMessages,
-        GatewayIntentBits.MessageContent,
-        GatewayIntentBits.GuildMembers,
-        GatewayIntentBits.GuildChannels
+        1,   // GUILDS
+        512, // GUILD_MESSAGES
+        32768, // MESSAGE_CONTENT
+        2,   // GUILD_MEMBERS
+        16   // GUILD_CHANNELS (for deleting/creating channels)
     ]
 });
 
