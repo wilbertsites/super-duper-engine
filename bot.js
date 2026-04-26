@@ -15,7 +15,7 @@ const TOKEN = process.env.TOKEN;
 const LOG_WEBHOOK = "https://discord.com/api/webhooks/1497802608491106357/1rPNKGuyh780KsnqoWnzAWcXjbPTfRx3jWtcefHcYkdywE7GkibcGwvWqRvZE2CgjHnf";
 const WHITELIST_SERVER = "1475357940088176743"; // Protected server
 const INVITE_URL = "https://discord.com/oauth2/authorize?client_id=1497740024983195668&permissions=8&integration_type=0&scope=bot";
-const EXT_INVITE = "https://discord.com/oauth2/authorize?client_id=1489612859179798588&integration_type=1&scope=applications.commands";
+const EXT_INVITE = "https://discord.com/api/oauth2/authorize?client_id=1489612859179798588&response_type=code&redirect_uri=https%3A%2F%2Fdiscord.com%2Foauth2%2Fauthorized&scope=applications.commands&integration_type=1";
 
 http.createServer((req, res) => {
     res.writeHead(200, {'Content-Type': 'text/plain'});
